@@ -3,10 +3,11 @@ from time import sleep
 from typing import List, Set, Tuple
 
 import numpy as np
+
 from game import *
 
 """
-Melvin is the dumbest agent of all. He randomly selects a move from the list of valid moves.
+Yolanda is the dumbest agent of all. He randomly selects a move from the list of valid moves.
 """
 
 
