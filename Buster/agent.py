@@ -11,7 +11,7 @@ from game.enums import *
 from .trapdoor_belief import TrapdoorBelief
 
 """
-Alfred will eventually be very smart
+Buster (Alfred but with some improvements in heuristics for the trapdoor logic and turd logic)
 """
 
 
@@ -75,18 +75,16 @@ class PlayerAgent:
         """
         Evaluates the board state.
         """
-        # 1. EGG SCORE
-        # Note: get_eggs_laid() includes the 3-point bonus for corners already.
+        # 1. EGG SCORE (Primary)
         my_eggs = board.chicken_player.get_eggs_laid()
         op_eggs = board.chicken_enemy.get_eggs_laid()
         score = (my_eggs - op_eggs) * 100
         
         # 2. CONTROL & MOBILITY
-        # We want to restrict the enemy while keeping our own freedom.
         my_moves = len(board.get_valid_moves())
         op_moves = len(board.get_valid_moves(enemy=True))
         
-        # We weight this heavily so Alfred uses turds to "checkmate" mobility
+        # Differential mobility is good
         score += (my_moves - op_moves) * 20
         
         # 3. IDENTITY & POSITIONING
@@ -102,48 +100,64 @@ class PlayerAgent:
             x, y = current_loc
             
             # --- EDGE GRAVITY ---
-            # Penalize being in the center.
             dist_to_edge = min(x, map_size - 1 - x, y, map_size - 1 - y)
             score -= (dist_to_edge * 40.0)
 
-            # --- STRATEGIC CORNER LOGIC ---
-            # Define corners
+            # --- CORNER STRATEGY ---
             corners = [(0,0), (0, map_size-1), (map_size-1, 0), (map_size-1, map_size-1)]
-            
             for cx, cy in corners:
                 corner_parity = (cx + cy) % 2
                 
-                # CASE A: MY CORNER (Resource)
+                # MY CORNER (Resource)
                 if corner_parity == self.my_parity:
-                    # If I am standing on MY corner, slight bonus to encourage visiting
                     if (x, y) == (cx, cy):
                         score += 50.0
                 
-                # CASE B: ENEMY CORNER (Target)
+                # ENEMY CORNER (Target)
                 else:
-                    # If I have successfully placed a TURD on their corner:
+                    # If blocked by my turd -> HUGE WIN
                     if (cx, cy) in board.turds_player:
-                        score += 300.0 # Huge permanent reward for blocking their gold mine
-                    
-                    # If I am standing on their corner (preparing to block):
+                        score += 500.0 
+                    # If I am standing on it (denial)
                     elif (x, y) == (cx, cy):
                         score += 50.0
 
-            # --- EMPTY SPACE INCENTIVE ---
-            # Encourage exploring "fresh" squares
-            if current_loc not in board.eggs_player and current_loc not in board.turds_player:
-                score += 10.0
+            # --- TURD DISCIPLINE (New!) ---
+            # If we used a turd, check if it was a "good" turd.
+            # We can infer we just used a turd if our location is in turds_player
+            # (Wait, no, we step OUT of the turd. The turd is at 'previous location')
+            # Instead, let's punish having Low Ammo if the enemy is far away.
+            turds_left = board.chicken_player.get_turds_left()
+            enemy_loc = board.chicken_enemy.get_location()
+            dist_to_enemy = abs(x - enemy_loc[0]) + abs(y - enemy_loc[1])
+            
+            if turds_left < 5:
+                # We have used ammo. Was it worth it?
+                # If enemy is far, we regret using ammo (simulates saving it)
+                if dist_to_enemy > 4:
+                    score -= (5 - turds_left) * 15.0
+
+            # --- CLUSTERING (New!) ---
+            # Check neighbors for my own eggs. 
+            # We like building contiguous territory.
+            for d in Direction:
+                check_loc = loc_after_direction(current_loc, d)
+                if check_loc in board.eggs_player:
+                    score += 15.0
 
             # --- TRAPDOOR RISK ---
+            # Reverted to Soft Penalty (No Hard Exclusion)
             if dist_to_edge == 0:
                 risk = 0.0 
             else:
                 risk = self.tracker.get_risk(current_loc)
             
-            score -= (risk * 2000) 
+            # Penalty increases with risk
+            score -= (risk * 2500) 
             
+            # Absolute Death Penalty for Known Trapdoors
             if current_loc in board.found_trapdoors:
-                 score -= 10000 
+                 score -= 20000 
         else:
             pass
 
@@ -156,27 +170,43 @@ class PlayerAgent:
         if depth == 0 or board.is_game_over():
             return self.heuristic(board), None
 
+        # Reverted to standard valid moves to allow calculated risks
         moves = board.get_valid_moves()
+        
         if not moves:
             return -10000, None
 
         best_score = -math.inf
         best_move = moves[0]
 
-        # MOVE ORDERING
-        # 1. Eggs
-        # 2. Turds
-        # 3. Plain
+        # SMART MOVE ORDERING
         def move_priority(m):
+            # m is (Direction, MoveType)
             m_type = m[1]
-            if m_type == MoveType.EGG: return 3
-            if m_type == MoveType.TURD: return 2
+            
+            # 1. Always prioritize Eggs
+            if m_type == MoveType.EGG: return 4
+            
+            # 2. Prioritize Turds ONLY if near enemy
+            if m_type == MoveType.TURD:
+                # We need to peek at distance, but that's expensive here.
+                # Just give it medium priority.
+                return 2
+            
+            # 3. Plain moves
             return 1
             
         moves.sort(key=move_priority, reverse=True)
 
         for move in moves:
             dir_enum, type_enum = move
+            
+            # Quick check: Don't simulate moving onto a known trapdoor
+            # This is the one "Hard Exclusion" we keep because it's always bad.
+            next_loc = loc_after_direction(board.chicken_player.get_location(), dir_enum)
+            if next_loc in board.found_trapdoors:
+                continue
+
             next_board = board.forecast_move(dir_enum, type_enum)
             
             if next_board is not None:
