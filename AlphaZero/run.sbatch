@@ -2,12 +2,14 @@
 #SBATCH -J ChickenZero
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=4
-#SBATCH --gres=gpu:H100:1
+#SBATCH --gres=gpu:V100:1
 #SBATCH --mem=32G
 #SBATCH -t 4:00:00
-#SBATCH -q inferno
 #SBATCH -o Output-%j.out
 #SBATCH -e Error-%j.err
+
+# NOTE: We changed gpu:H100:1 to gpu:V100:1 to skip the line.
+# A V100 is still extremely fast for this specific project.
 
 # 1. Load Environment
 module load pytorch  # Load standard PACE pytorch module

@@ -2,6 +2,7 @@ import math
 import torch
 import numpy as np
 from .utils import encode_board, decode_action, encode_action
+from game.enums import Result
 
 class MCTSNode:
     def __init__(self, parent=None, prior_prob=0):
@@ -18,6 +19,8 @@ class MCTSNode:
         
     def ucb_score(self, cpuct=1.0):
         # U = c_puct * P * sqrt(N_parent) / (1 + N_child)
+        if self.parent is None:
+             return self.value_avg
         u = cpuct * self.prior_prob * math.sqrt(self.parent.visit_count) / (1 + self.visit_count)
         return self.value_avg + u
 
@@ -48,8 +51,6 @@ class MCTS:
                 direction, move_type = decode_action(action_idx)
                 
                 # Note: In MCTS for AlphaZero, we treat game engine strictly.
-                # If move is invalid, we handle it during expansion usually, 
-                # but here we just apply.
                 board_clone.apply_move(direction, move_type, check_ok=False)
                 board_clone.reverse_perspective() # Flip for next player
 
@@ -58,8 +59,6 @@ class MCTS:
             
             # 3. BACKPROPAGATION
             # Propagate value up the tree. 
-            # Note: Value is always from perspective of current player.
-            # When moving up, we flip the sign because parent is enemy.
             while node is not None:
                 node.visit_count += 1
                 node.value_sum += value
@@ -71,18 +70,23 @@ class MCTS:
     def _expand(self, node, board_obj):
         # Check if game over
         if board_obj.is_game_over():
-            # If game over, return actual result
             winner = board_obj.get_winner()
-            # If I (current perspective) won: +1. If enemy won: -1.
-            # This logic needs to align with how 'reverse_perspective' works.
-            # If board.is_game_over, board.winner tells us who won.
-            # We need to map that to +1/-1.
-            # Simplified: Heuristic fallback for now.
-            diff = board_obj.chicken_player.get_eggs_laid() - board_obj.chicken_enemy.get_eggs_laid()
-            return np.tanh(diff / 10.0)
+            # If Result.PLAYER, it means the current perspective won (+1)
+            # If Result.ENEMY, they lost (-1)
+            if winner == Result.PLAYER:
+                return 1.0
+            elif winner == Result.ENEMY:
+                return -1.0
+            else:
+                return 0.0
 
         # Prepare input
         tensor_in = encode_board(board_obj, self.tracker)
+        
+        # --- FIX: Move tensor to the same device as the model (CPU or CUDA) ---
+        device = next(self.model.parameters()).device
+        tensor_in = tensor_in.to(device)
+        # ----------------------------------------------------------------------
         
         # Inference
         self.model.eval()
@@ -94,7 +98,8 @@ class MCTS:
         valid_indices = [encode_action(d, t) for d, t in valid_moves]
         
         # Softmax over VALID moves only
-        probs = torch.softmax(policy_logits, dim=1).numpy()[0]
+        # We move result back to CPU for numpy operations
+        probs = torch.softmax(policy_logits, dim=1).cpu().numpy()[0]
         
         # Create children
         for idx in valid_indices:

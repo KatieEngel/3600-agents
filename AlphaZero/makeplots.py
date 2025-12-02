@@ -1,8 +1,18 @@
 import matplotlib.pyplot as plt
 import csv
 import os
+import sys
 
-def plot_training_stats(stats_file="stats.txt"):
+def plot_training_stats():
+    # --- ROBUST PATH FINDING ---
+    # Find the directory where THIS script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Look for stats.txt in the same folder as the script
+    stats_file = os.path.join(script_dir, "stats.txt")
+    
+    print(f"Looking for stats file at: {stats_file}")
+
     iterations = []
     total_losses = []
     value_losses = []
@@ -18,11 +28,12 @@ def plot_training_stats(stats_file="stats.txt"):
                 value_losses.append(float(row['ValueLoss']))
                 policy_losses.append(float(row['PolicyLoss']))
     except FileNotFoundError:
-        print(f"Error: Could not find '{stats_file}'.")
-        print("Make sure you downloaded it from PACE and placed it in this folder.")
+        print(f"Error: Could not find stats.txt.")
+        print(f"Checked path: {stats_file}")
+        print("Make sure you downloaded 'stats.txt' from PACE and put it in the AlphaZero folder.")
         return
     except KeyError:
-        print("Error: stats.txt format is incorrect.")
+        print("Error: stats.txt format is incorrect. Ensure it has headers: Iteration,TotalLoss,ValueLoss,PolicyLoss")
         return
 
     if not iterations:
@@ -43,17 +54,20 @@ def plot_training_stats(stats_file="stats.txt"):
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.6)
     
-    # 3. Save
-    output_file = 'learning.png'
+    # 3. Save to the same directory
+    output_file = os.path.join(script_dir, 'learning.png')
     plt.savefig(output_file)
     print(f"Success! Plot saved to {output_file}")
+    
+    # Open the image automatically (works on macOS/Linux/Windows)
+    if sys.platform.startswith('darwin'):
+        os.system(f'open "{output_file}"')
+    elif os.name == 'nt':
+        os.system(f'start "{output_file}"')
+    elif os.name == 'posix':
+        os.system(f'xdg-open "{output_file}"')
+
     plt.show()
 
 if __name__ == "__main__":
-    # Check current folder and AlphaZero folder
-    if os.path.exists("AlphaZero/stats.txt"):
-        plot_training_stats("AlphaZero/stats.txt")
-    elif os.path.exists("stats.txt"):
-        plot_training_stats("stats.txt")
-    else:
-        print("Could not find stats.txt in current directory or AlphaZero/ subdirectory.")
+    plot_training_stats()
